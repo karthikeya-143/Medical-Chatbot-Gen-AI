@@ -1,5 +1,8 @@
+import os
 import streamlit as st
 from dotenv import load_dotenv
+
+from groq import Groq
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_pinecone import PineconeVectorStore
@@ -47,14 +50,29 @@ def load_vectorstore():
     return docsearch
 
 # ----------------------------------
-# LOAD RETRIEVER
+# GROQ CLIENT
+# ----------------------------------
+
+@st.cache_resource
+def load_llm():
+
+    client = Groq(
+        api_key=os.getenv("GROQ_API_KEY")
+    )
+
+    return client
+
+# ----------------------------------
+# LOAD COMPONENTS
 # ----------------------------------
 
 docsearch = load_vectorstore()
 
 retriever = docsearch.as_retriever(
-    search_kwargs={"k": 3}
+    search_kwargs={"k": 5}
 )
+
+client = load_llm()
 
 # ----------------------------------
 # USER INPUT
@@ -66,15 +84,50 @@ query = st.text_input(
 
 if query:
 
-    with st.spinner("Searching..."):
+    with st.spinner("Searching Medical Knowledge Base..."):
 
         docs = retriever.get_relevant_documents(query)
 
-        answer = ""
+        context = "\n\n".join(
+            [doc.page_content for doc in docs]
+        )
 
-        for doc in docs:
-            answer += doc.page_content + "\n\n"
+        prompt = f"""
+You are an expert medical assistant.
+
+Use the provided medical context to answer the user's question.
+
+Instructions:
+- Give a detailed answer in paragraph form.
+- Explain the condition clearly.
+- Include causes, symptoms, and treatment if available.
+- Do not simply copy the context.
+- If the answer is not found, say:
+  "I could not find sufficient information in the medical knowledge base."
+
+Medical Context:
+{context}
+
+Question:
+{query}
+
+Detailed Answer:
+"""
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,
+            max_tokens=800
+        )
+
+        answer = response.choices[0].message.content
 
         st.success("Answer Generated")
 
-        st.markdown(answer)
+        st.write(answer)
